@@ -1,6 +1,7 @@
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
+local SoundService = game:GetService("SoundService")
 
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
@@ -8,6 +9,17 @@ local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 local savedPosition = nil
 local tweenDuration = 10
 local SCAN_INTERVAL = 2
+local autoFarmEnabled = false
+local autoFarmThread = nil
+local farming = false
+local notifiedEggs = {}
+
+local TARGET_EGGS = {
+    ["Cherub Egg"] = true,
+    ["Solaris Egg"] = true,
+}
+
+local SOUND_ID = "rbxassetid://6073491164"
 
 local SUFFIX = {
     k = 1e3, m = 1e6, b = 1e9, t = 1e12,
@@ -71,8 +83,8 @@ mini.MouseLeave:Connect(function()
 end)
 
 local win = Instance.new("Frame")
-win.Size = UDim2.new(0, 185, 0, 270)
-win.Position = UDim2.new(0.5, -92, 0.5, -135)
+win.Size = UDim2.new(0, 185, 0, 300)
+win.Position = UDim2.new(0.5, -92, 0.5, -150)
 win.BackgroundColor3 = Color3.fromRGB(18, 18, 20)
 win.BorderSizePixel = 0
 win.Active = true
@@ -125,6 +137,7 @@ end
 
 makeDivider(28)
 makeDivider(194)
+makeDivider(254)
 
 local statusLbl = Instance.new("TextLabel")
 statusLbl.Size = UDim2.new(1, -20, 0, 12)
@@ -164,10 +177,10 @@ listLayout.SortOrder = Enum.SortOrder.LayoutOrder
 listLayout.Padding = UDim.new(0, 3)
 listLayout.Parent = list
 
-local function makeBtn(text, xScale, xOffset)
+local function makeBtn(text, xScale, xOffset, yPos)
     local b = Instance.new("TextButton")
     b.Size = UDim2.new(xScale, -7, 0, 22)
-    b.Position = UDim2.new(xOffset, 0, 0, 202)
+    b.Position = UDim2.new(xOffset, 0, 0, yPos)
     b.BackgroundColor3 = Color3.fromRGB(45, 45, 50)
     b.Text = text
     b.TextColor3 = Color3.fromRGB(220, 220, 230)
@@ -190,12 +203,13 @@ local function makeBtn(text, xScale, xOffset)
     return b
 end
 
-local saveBtn = makeBtn("Save Pos", 0.48, 0, 10)
-local tweenBtn = makeBtn("Tween", 0.48, 0.52, 0)
+local saveBtn = makeBtn("Save Pos", 0.48, 0, 202)
+local tweenBtn = makeBtn("Tween", 0.48, 0.52, 202)
+local autoFarmBtn = makeBtn("Auto Farm: OFF", 1, 0.5, 228)
 
 local warnLbl = Instance.new("TextLabel")
 warnLbl.Size = UDim2.new(1, -20, 0, 12)
-warnLbl.Position = UDim2.new(0, 10, 0, 228)
+warnLbl.Position = UDim2.new(0, 10, 0, 260)
 warnLbl.BackgroundTransparency = 1
 warnLbl.Text = "(10 is Safe)"
 warnLbl.TextColor3 = Color3.fromRGB(255, 200, 100)
@@ -206,7 +220,7 @@ warnLbl.Parent = win
 
 local timeLbl = Instance.new("TextLabel")
 timeLbl.Size = UDim2.new(0.5, 0, 0, 12)
-timeLbl.Position = UDim2.new(0, 10, 0, 242)
+timeLbl.Position = UDim2.new(0, 10, 0, 274)
 timeLbl.BackgroundTransparency = 1
 timeLbl.Text = "Time"
 timeLbl.TextColor3 = Color3.fromRGB(180, 180, 190)
@@ -217,7 +231,7 @@ timeLbl.Parent = win
 
 local timeVal = Instance.new("TextLabel")
 timeVal.Size = UDim2.new(0.4, 0, 0, 12)
-timeVal.Position = UDim2.new(0.6, 0, 0, 242)
+timeVal.Position = UDim2.new(0.6, 0, 0, 274)
 timeVal.BackgroundTransparency = 1
 timeVal.Text = string.format("%.1fs", tweenDuration)
 timeVal.TextColor3 = Color3.fromRGB(140, 140, 150)
@@ -228,7 +242,7 @@ timeVal.Parent = win
 
 local track = Instance.new("Frame")
 track.Size = UDim2.new(1, -20, 0, 4)
-track.Position = UDim2.new(0, 10, 0, 258)
+track.Position = UDim2.new(0, 10, 0, 290)
 track.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
 track.BorderSizePixel = 0
 track.Parent = win
@@ -250,16 +264,28 @@ handleCorner.Parent = handle
 
 local draggingSlider = false
 
+local function setSliderValue(value)
+    value = math.clamp(value, 5, 15)
+    tweenDuration = value
+    local rel = (value - 5) / 10
+    handle.Position = UDim2.new(rel, -6, 0.5, -6)
+    timeVal.Text = string.format("%.1fs", value)
+    warnLbl.TextColor3 = value > 10
+        and Color3.fromRGB(255, 100, 100)
+        or Color3.fromRGB(255, 200, 100)
+end
+
 local function updateSlider(input)
     local abs = track.AbsolutePosition
     local size = track.AbsoluteSize.X
     if size <= 0 then return end
 
     local rel = math.clamp((input.Position.X - abs.X) / size, 0, 1)
-    tweenDuration = 5 + rel * 10
+    local value = 5 + rel * 10
+    tweenDuration = value
     handle.Position = UDim2.new(rel, -6, 0.5, -6)
-    timeVal.Text = string.format("%.1fs", tweenDuration)
-    warnLbl.TextColor3 = tweenDuration > 10
+    timeVal.Text = string.format("%.1fs", value)
+    warnLbl.TextColor3 = value > 10
         and Color3.fromRGB(255, 100, 100)
         or Color3.fromRGB(255, 200, 100)
 end
@@ -328,21 +354,197 @@ local function getPivot(egg)
     return nil
 end
 
+local function getPickupPrompt(egg)
+    local ok, prompt = pcall(function()
+        return egg.Inner.Pickup
+    end)
+    if ok and prompt then return prompt end
+
+    local found = nil
+    for _, child in ipairs(egg:GetDescendants()) do
+        if child:IsA("ProximityPrompt") then
+            found = child
+            break
+        end
+    end
+    return found
+end
+
+local function firePrompt(prompt)
+    if not prompt then return end
+
+    if type(fireproximityprompt) == "function" then
+        pcall(function()
+            fireproximityprompt(prompt)
+        end)
+        return
+    end
+
+    pcall(function()
+        prompt:InputHoldBegin()
+        task.wait(prompt.HoldDuration)
+        prompt:InputHoldEnd()
+    end)
+end
+
+local function holdPrompt(prompt, duration)
+    if not prompt then return end
+
+    local endTime = tick() + duration
+    while tick() < endTime do
+        firePrompt(prompt)
+        task.wait(0.05)
+    end
+end
+
 local function teleportTo(egg)
     local root = getRoot()
-    if not root then
-        statusLbl.Text = "No character"
-        return
-    end
+    if not root then return end
 
     local cf = getPivot(egg)
-    if not cf then
-        statusLbl.Text = "Can't reach egg"
+    if not cf then return end
+
+    root.CFrame = cf + Vector3.new(0, 3, 0)
+end
+
+local function findTargetEgg()
+    local container = workspace:FindFirstChild("RenderedEggs")
+    if not container then return nil end
+
+    for _, egg in ipairs(container:GetChildren()) do
+        if TARGET_EGGS[egg.Name] then
+            return egg
+        end
+    end
+    return nil
+end
+
+-- ============================================================
+-- Sound notification
+-- ============================================================
+local alertSound = Instance.new("Sound")
+alertSound.Name = "VontashAlert"
+alertSound.SoundId = SOUND_ID
+alertSound.Volume = 1
+alertSound.Parent = SoundService
+
+local function playAlert()
+    local clone = alertSound:Clone()
+    clone.Parent = SoundService
+    clone:Play()
+    clone.Ended:Connect(function()
+        clone:Destroy()
+    end)
+    -- Cleanup if Ended never fires
+    task.delay(10, function()
+        if clone and clone.Parent then
+            clone:Destroy()
+        end
+    end)
+end
+
+local function checkEggsForAlert()
+    local container = workspace:FindFirstChild("RenderedEggs")
+    if not container then
+        -- Reset notifications when folder disappears
+        notifiedEggs = {}
         return
     end
 
-    root.CFrame = cf + Vector3.new(0, 3, 0)
-    statusLbl.Text = "Teleported: " .. egg.Name
+    local present = {}
+
+    for _, egg in ipairs(container:GetChildren()) do
+        if TARGET_EGGS[egg.Name] then
+            present[egg.Name] = true
+            if not notifiedEggs[egg.Name] then
+                notifiedEggs[egg.Name] = true
+                playAlert()
+                statusLbl.Text = "🔔 " .. egg.Name .. " spawned!"
+                statusLbl.TextColor3 = Color3.fromRGB(255, 200, 100)
+                task.delay(3, function()
+                    if statusLbl.Text:find("spawned!") then
+                        statusLbl.TextColor3 = Color3.fromRGB(140, 140, 150)
+                    end
+                end)
+            end
+        end
+    end
+
+    -- Clear notified flags for eggs that are no longer present
+    for name, _ in pairs(notifiedEggs) do
+        if not present[name] then
+            notifiedEggs[name] = nil
+        end
+    end
+end
+
+local function farmEgg(egg)
+    farming = true
+    statusLbl.Text = "Farming: " .. egg.Name
+    statusLbl.TextColor3 = Color3.fromRGB(140, 140, 150)
+
+    for i = 1, 10 do
+        local root = getRoot()
+        if not root then break end
+        local cf = getPivot(egg)
+        if not cf then break end
+        root.CFrame = cf + Vector3.new(0, 3, 0)
+        task.wait(0.05)
+    end
+
+    local prompt = getPickupPrompt(egg)
+    if not prompt then
+        statusLbl.Text = "No prompt found on " .. egg.Name
+        farming = false
+        return
+    end
+
+    statusLbl.Text = "Firing prompt..."
+    holdPrompt(prompt, 1)
+
+    if savedPosition then
+        statusLbl.Text = "Tweening back..."
+        local root = getRoot()
+        if root then
+            local info = TweenInfo.new(tweenDuration, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
+            local tween = TweenService:Create(root, info, { CFrame = savedPosition })
+            tween:Play()
+            tween.Completed:Wait()
+        end
+    end
+
+    statusLbl.Text = "Farm cycle done"
+    farming = false
+end
+
+local function autoFarmLoop()
+    while autoFarmEnabled do
+        if not farming then
+            local target = findTargetEgg()
+            if target then
+                farmEgg(target)
+            end
+        end
+        task.wait(0.5)
+    end
+end
+
+local function setAutoFarm(on)
+    autoFarmEnabled = on
+    if on then
+        autoFarmBtn.Text = "Auto Farm: ON"
+        autoFarmBtn.BackgroundColor3 = Color3.fromRGB(60, 160, 100)
+        setSliderValue(10)
+        statusLbl.Text = "Auto farm enabled"
+        statusLbl.TextColor3 = Color3.fromRGB(140, 140, 150)
+        autoFarmThread = task.spawn(autoFarmLoop)
+    else
+        autoFarmBtn.Text = "Auto Farm: OFF"
+        autoFarmBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 50)
+        statusLbl.Text = "Auto farm disabled"
+        statusLbl.TextColor3 = Color3.fromRGB(140, 140, 150)
+        farming = false
+    end
 end
 
 local function clearList()
@@ -411,7 +613,9 @@ local function refresh()
 
     local eggs = container:GetChildren()
     if #eggs == 0 then
-        statusLbl.Text = "No eggs"
+        if not autoFarmEnabled then
+            statusLbl.Text = "No eggs"
+        end
         return
     end
 
@@ -429,7 +633,9 @@ local function refresh()
         return a.value > b.value
     end)
 
-    statusLbl.Text = #entries .. " eggs"
+    if not autoFarmEnabled then
+        statusLbl.Text = #entries .. " eggs"
+    end
 
     for i, entry in ipairs(entries) do
         makeRow(entry.egg, entry.luck, i)
@@ -438,6 +644,7 @@ end
 
 task.spawn(function()
     while true do
+        pcall(checkEggsForAlert)
         pcall(refresh)
         task.wait(SCAN_INTERVAL)
     end
@@ -473,6 +680,10 @@ tweenBtn.MouseButton1Click:Connect(function()
     tween.Completed:Connect(function()
         statusLbl.Text = "Arrived"
     end)
+end)
+
+autoFarmBtn.MouseButton1Click:Connect(function()
+    setAutoFarm(not autoFarmEnabled)
 end)
 
 closeBtn.MouseButton1Click:Connect(function()
