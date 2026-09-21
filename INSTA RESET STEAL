@@ -419,9 +419,6 @@ local function findTargetEgg()
     return nil
 end
 
--- ============================================================
--- Sound notification
--- ============================================================
 local alertSound = Instance.new("Sound")
 alertSound.Name = "VontashAlert"
 alertSound.SoundId = SOUND_ID
@@ -435,7 +432,6 @@ local function playAlert()
     clone.Ended:Connect(function()
         clone:Destroy()
     end)
-    -- Cleanup if Ended never fires
     task.delay(10, function()
         if clone and clone.Parent then
             clone:Destroy()
@@ -446,7 +442,6 @@ end
 local function checkEggsForAlert()
     local container = workspace:FindFirstChild("RenderedEggs")
     if not container then
-        -- Reset notifications when folder disappears
         notifiedEggs = {}
         return
     end
@@ -470,7 +465,6 @@ local function checkEggsForAlert()
         end
     end
 
-    -- Clear notified flags for eggs that are no longer present
     for name, _ in pairs(notifiedEggs) do
         if not present[name] then
             notifiedEggs[name] = nil
@@ -727,5 +721,37 @@ end
 
 makeDraggable(win)
 makeDraggable(mini)
+
+task.spawn(function()
+    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    local root = char:WaitForChild("HumanoidRootPart", 10)
+
+    if root then
+        savedPosition = root.CFrame
+        statusLbl.Text = "Position auto-saved"
+        setAutoFarm(true)
+        task.delay(2, function()
+            if statusLbl.Text == "Position auto-saved" then
+                statusLbl.Text = "Scanning..."
+            end
+        end)
+    end
+
+    LocalPlayer.CharacterAdded:Connect(function(newChar)
+        local newRoot = newChar:WaitForChild("HumanoidRootPart", 10)
+        if newRoot then
+            savedPosition = newRoot.CFrame
+            statusLbl.Text = "Position re-saved"
+            if not autoFarmEnabled then
+                setAutoFarm(true)
+            end
+            task.delay(2, function()
+                if statusLbl.Text == "Position re-saved" then
+                    statusLbl.Text = "Scanning..."
+                end
+            end)
+        end
+    end)
+end)
 
 print("Vontash Egg Teleport loaded.")
